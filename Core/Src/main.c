@@ -23,6 +23,7 @@
 /* USER CODE BEGIN Includes */
 
 #include <stdbool.h>
+#include <stdio.h>
 #include <math.h>
 
 /* USER CODE END Includes */
@@ -38,6 +39,8 @@
 #define SEGMENT_BLANK 0b00000000
 #define SEGMENT_NEGATIVE 0b01000000
 #define SEGMENT_DP 0b10000000
+
+#define BME280_addr (0x76 << 1)
 
 /* USER CODE END PD */
 
@@ -56,6 +59,7 @@ UART_HandleTypeDef huart2;
 /* USER CODE BEGIN PV */
 
 // 7 segment display variables
+
 const uint8_t digit_segments[10] = {
 		0b00111111, //0
 		0b00000110, //1
@@ -76,9 +80,49 @@ uint8_t segment_display[4] = {
 		SEGMENT_BLANK};
 
 // button debounce variables
+
 uint32_t currentDebounce = 0;
 uint32_t lastDebounce = 0;
 uint8_t state = 0;
+
+// BME280 variables
+
+uint8_t config_hum = 0x01;
+uint8_t config_pres_temp = 0x27;
+
+HAL_StatusTypeDef ret;
+
+uint8_t sensor_data[8];
+
+int32_t pres_data;
+int32_t temp_data;
+uint16_t hum_data;
+
+float temperature;
+float pressure;
+float humidity;
+
+//Calibration parameter variables
+uint16_t dig_T1;
+int16_t dig_T2;
+int16_t dig_T3;
+
+uint16_t dig_P1;
+int16_t dig_P2;
+int16_t dig_P3;
+int16_t dig_P4;
+int16_t dig_P5;
+int16_t dig_P6;
+int16_t dig_P7;
+int16_t dig_P8;
+int16_t dig_P9;
+
+uint8_t dig_H1;
+int16_t dig_H2;
+uint8_t dig_H3;
+int16_t dig_H4;
+int16_t dig_H5;
+int8_t dig_H6;
 
 /* USER CODE END PV */
 
@@ -90,10 +134,23 @@ static void MX_I2C1_Init(void);
 static void MX_TIM16_Init(void);
 /* USER CODE BEGIN PFP */
 
+// prototype functions for 7 segment display
+
 void set_segments(uint8_t input);
 void update_segment_display(uint8_t input);
 void float_to_digit (float num, uint8_t decimal);
 
+// prototype functions for BME280 sensor
+
+int32_t  BME280_compensate_T_int32(int32_t adc_T);
+uint32_t BME280_compensate_P_int64(int32_t adc_P);
+uint32_t BME280_compensate_H_int32(int32_t adc_H);
+
+HAL_StatusTypeDef BME280_init(void);
+HAL_StatusTypeDef BME280_calibration_parameters(void);
+
+void BME280_ReadData(void);
+void Display_Update(void);
 
 /* USER CODE END PFP */
 
@@ -136,7 +193,10 @@ int main(void)
   MX_TIM16_Init();
   /* USER CODE BEGIN 2 */
 
-  //Timer starts
+  // Start sensor
+  BME280_init();
+
+  // Timer starts
   HAL_TIM_Base_Start_IT(&htim16);
 
   /* USER CODE END 2 */
@@ -145,6 +205,26 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
+
+	  // Read data from sensor
+	  BME280_ReadData();
+
+	  switch(state){
+		case 0:
+			float_to_digit(temperature, 1);
+			break;
+		case 1:
+			float_to_digit(pressure, 1);
+			break;
+		case 2:
+			float_to_digit(humidity, 1);
+			break;
+		default:
+		    break;
+	  }
+
+	  HAL_Delay(250);
+
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -377,7 +457,7 @@ static void MX_GPIO_Init(void)
 
 /* USER CODE BEGIN 4 */
 
-
+// Functions for 4 digit 7 segment display
 
 void set_segments(uint8_t input){
 
@@ -428,6 +508,8 @@ void HAL_TIM_PeriodElapsedCallback (TIM_HandleTypeDef * htim){
 
 }
 
+// Function to convert float to 4 digits for 7 segment display
+
 void float_to_digit (float num, uint8_t decimal){
 
 	bool negative = false;
@@ -471,42 +553,222 @@ void float_to_digit (float num, uint8_t decimal){
 
 }
 
-void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin){
+// Function for button & debounce
 
-	//float input;
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin){
 
 	currentDebounce = HAL_GetTick();
 
 	if((currentDebounce-lastDebounce) >= 50 && GPIO_Pin == GPIO_PIN_0){
 		lastDebounce = currentDebounce;
 
-		switch(state){
-		case 0:
-			float_to_digit(990.5f, 1);
+		if(state < 3)
 			state ++;
-			break;
-		case 1:
-			float_to_digit(-5.32f, 1);
-			state ++;
-			break;
-		case 2:
-			float_to_digit(0.42f, 1);
+		else
 			state = 0;
-			break;
-		default:
-		    state = 0;
-		    break;
-		}
 
-		//float_to_digit(input, 1);
 	}
 }
 
+// Functions for BME280 sensor
+
+HAL_StatusTypeDef  BME280_init(){
+
+	HAL_StatusTypeDef ret;
+
+	ret = HAL_I2C_Mem_Write(&hi2c1, BME280_addr, 0xF2, I2C_MEMADD_SIZE_8BIT, &config_hum, 1, HAL_MAX_DELAY);
+	if(ret != HAL_OK){
+		printf("Write Error for humidity sensor\r\n");
+		return ret;
+	}
+	ret = HAL_I2C_Mem_Write(&hi2c1, BME280_addr, 0xF4, I2C_MEMADD_SIZE_8BIT, &config_pres_temp, 1, HAL_MAX_DELAY);
+	if(ret != HAL_OK){
+		printf("Write Error for temperature & pressure sensor\r\n");
+		return ret;
+	}
+
+	return BME280_calibration_parameters();
+
+}
+
+void BME280_ReadData(){
+
+	ret = HAL_I2C_Mem_Read(&hi2c1, BME280_addr, 0xF7, I2C_MEMADD_SIZE_8BIT, sensor_data, 8, HAL_MAX_DELAY);
+	if(ret != HAL_OK){
+		printf("Read Error\r\n");
+		return;
+	}
+
+	pres_data = ((int32_t)sensor_data[0] << 12 ) | ((int32_t)sensor_data[1] <<4 ) | ((int32_t)sensor_data[2] >> 4 );
+
+	temp_data = ((int32_t)sensor_data[3] << 12)| ((int32_t)sensor_data[4] <<4)  | ((int32_t)sensor_data[5] >> 4 );
+
+	hum_data = ((uint32_t)sensor_data[6]<< 8) | ((uint32_t)sensor_data[7]);
+
+	temperature = BME280_compensate_T_int32(temp_data) / 100.0f;
+	pressure = BME280_compensate_P_int64(pres_data) / 25600.0f;
+	humidity = BME280_compensate_H_int32(hum_data) / 1024.0f;
+
+}
+
+void Display_Update(){
+
+	printf("Pressure: %.2f hPa\r\n", pressure);
+	printf("Temperature: %.2f °C\r\n", temperature);
+	printf("Humidity: %.2f %%RH\r\n\n", humidity);
+
+}
+
+// Necessary function to allow printf to work
+
+int __io_putchar(int ch)
+{
+	HAL_UART_Transmit(&huart2, (uint8_t *)&ch, 1, HAL_MAX_DELAY);
+	return ch;
+}
+
+//Storing the hard-coded calibration parameters from bme280 into usable variables
+
+HAL_StatusTypeDef BME280_calibration_parameters(){
+
+uint8_t calibration1[26];
+uint8_t calibration2[7];
+
+HAL_StatusTypeDef ret;
 
 
+ret = HAL_I2C_Mem_Read(&hi2c1, BME280_addr, 0x88, I2C_MEMADD_SIZE_8BIT, calibration1, sizeof(calibration1), HAL_MAX_DELAY);
+	if(ret != HAL_OK){
+		printf("Calibration parameter set 1 Read Error\r\n");
+		return ret;
+	}
+ret = HAL_I2C_Mem_Read(&hi2c1, BME280_addr, 0xE1, I2C_MEMADD_SIZE_8BIT, calibration2, sizeof(calibration2), HAL_MAX_DELAY);
+	if(ret != HAL_OK){
+		printf("Calibration parameter set 2 Read Error\r\n");
+		return ret;
+	}
 
+dig_T1 = ((uint16_t)calibration1[1] << 8) | calibration1[0];
+dig_T2 = (int16_t)(((uint16_t)calibration1[3] << 8) | calibration1[2]);
+dig_T3 = (int16_t)(((uint16_t)calibration1[5] << 8) | calibration1[4]);
 
+dig_P1 = ((uint16_t)calibration1[7] << 8) | calibration1[6];
+dig_P2 = (int16_t)(((uint16_t)calibration1[9] << 8) | calibration1[8]);
+dig_P3 = (int16_t)(((uint16_t)calibration1[11] << 8) | calibration1[10]);
+dig_P4 = (int16_t)(((uint16_t)calibration1[13] << 8) | calibration1[12]);
+dig_P5 = (int16_t)(((uint16_t)calibration1[15] << 8) | calibration1[14]);
+dig_P6 = (int16_t)(((uint16_t)calibration1[17] << 8) | calibration1[16]);
+dig_P7 = (int16_t)(((uint16_t)calibration1[19] << 8) | calibration1[18]);
+dig_P8 = (int16_t)(((uint16_t)calibration1[21] << 8) | calibration1[20]);
+dig_P9 = (int16_t)(((uint16_t)calibration1[23] << 8) | calibration1[22]);
 
+dig_H1 = calibration1[25];
+dig_H2 = (int16_t)(((uint16_t)calibration2[1] << 8) | calibration2[0]);
+dig_H3 = calibration2[2];
+dig_H4 = (int16_t)(((int16_t)(int8_t)calibration2[3] << 4) | (calibration2[4] & (0x0F)));
+dig_H5 = (int16_t)(((int16_t)(int8_t)calibration2[5] << 4) | (calibration2[4] >> 4));
+dig_H6 = (int8_t)calibration2[6];
+
+printf("P1=%u P2=%d P3=%d\r\n", dig_P1, dig_P2, dig_P3);
+printf("P4=%d P5=%d P6=%d\r\n", dig_P4, dig_P5, dig_P6);
+printf("P7=%d P8=%d P9=%d\r\n", dig_P7, dig_P8, dig_P9);
+
+printf("H1=%u H2=%d H3=%u H4=%d H5=%d H6=%d\r\n\n", dig_H1, dig_H2, dig_H3, dig_H4, dig_H5, dig_H6);
+
+return HAL_OK;
+}
+
+// Returns temperature in DegC, resolution is 0.01 DegC.
+// Output value of "5123" equals 51.23 DegC.
+// t_fine carries fine temperature as global value.
+
+int32_t t_fine;
+
+int32_t BME280_compensate_T_int32(int32_t adc_T)
+{
+    int32_t var1, var2, T;
+
+    var1 = ((((adc_T >> 3) - ((int32_t)dig_T1 << 1))) *
+            ((int32_t)dig_T2)) >> 11;
+
+    var2 = (((((adc_T >> 4) - ((int32_t)dig_T1)) *
+             ((adc_T >> 4) - ((int32_t)dig_T1))) >> 12) *
+             ((int32_t)dig_T3)) >> 14;
+
+    t_fine = var1 + var2;
+
+    T = (t_fine * 5 + 128) >> 8;
+
+    return T;
+}
+
+// Returns pressure in Pa as unsigned 32-bit integer in Q24.8 format
+// (24 integer bits and 8 fractional bits)
+// Example:
+// 24674867 represents 24674867 / 256 = 96386.2 Pa = 963.862 hPa
+
+uint32_t BME280_compensate_P_int64(int32_t adc_P)
+{
+    int64_t var1, var2, p;
+
+    var1 = ((int64_t)t_fine) - 128000;
+    var2 = var1 * var1 * (int64_t)dig_P6;
+    var2 = var2 + ((var1 * (int64_t)dig_P5) << 17);
+    var2 = var2 + (((int64_t)dig_P4) << 35);
+    var1 = ((var1 * var1 * (int64_t)dig_P3) >> 8) +
+           ((var1 * (int64_t)dig_P2) << 12);
+    var1 = (((((int64_t)1) << 47) + var1) *
+            ((int64_t)dig_P1)) >> 33;
+
+    if (var1 == 0)
+    {
+        return 0; // Avoid division by zero
+    }
+
+    p = 1048576 - adc_P;
+    p = (((p << 31) - var2) * 3125) / var1;
+    var1 = (((int64_t)dig_P9) * (p >> 13) * (p >> 13)) >> 25;
+    var2 = (((int64_t)dig_P8) * p) >> 19;
+
+    p = ((p + var1 + var2) >> 8) +
+        (((int64_t)dig_P7) << 4);
+
+    return (uint32_t)p;
+}
+
+// Returns humidity in %RH as unsigned 32-bit integer in Q22.10 format
+// (22 integer bits and 10 fractional bits)
+// Example:
+// 47445 represents 47445 / 1024 = 46.333 %RH
+
+uint32_t BME280_compensate_H_int32(int32_t adc_H)
+{
+    int32_t v_x1_u32r;
+
+    v_x1_u32r = (t_fine - ((int32_t)76800));
+
+    v_x1_u32r = (((((adc_H << 14) -
+                   (((int32_t)dig_H4) << 20) -
+                   (((int32_t)dig_H5) * v_x1_u32r)) +
+                   ((int32_t)16384)) >> 15) *
+                 (((((((v_x1_u32r * ((int32_t)dig_H6)) >> 10) *
+                 (((v_x1_u32r * ((int32_t)dig_H3)) >> 11) +
+                 ((int32_t)32768))) >> 10) +
+                 ((int32_t)2097152)) *
+                 ((int32_t)dig_H2) + 8192) >> 14));
+
+    v_x1_u32r = (v_x1_u32r -
+                (((((v_x1_u32r >> 15) *
+                (v_x1_u32r >> 15)) >> 7) *
+                ((int32_t)dig_H1)) >> 4));
+
+    v_x1_u32r = (v_x1_u32r < 0 ? 0 : v_x1_u32r);
+
+    v_x1_u32r = (v_x1_u32r > 419430400 ?
+                419430400 : v_x1_u32r);
+
+    return (uint32_t)(v_x1_u32r >> 12);
+}
 
 
 
