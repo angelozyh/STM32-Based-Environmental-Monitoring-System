@@ -55,6 +55,7 @@ UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
 
+// 7 segment display variables
 const uint8_t digit_segments[10] = {
 		0b00111111, //0
 		0b00000110, //1
@@ -68,7 +69,16 @@ const uint8_t digit_segments[10] = {
 		0b01100111  //9
 };
 
-uint8_t segment_display[4];
+uint8_t segment_display[4] = {
+		SEGMENT_BLANK,
+		SEGMENT_BLANK,
+		SEGMENT_BLANK,
+		SEGMENT_BLANK};
+
+// button debounce variables
+uint32_t currentDebounce = 0;
+uint32_t lastDebounce = 0;
+uint8_t state = 0;
 
 /* USER CODE END PV */
 
@@ -128,10 +138,6 @@ int main(void)
 
   //Timer starts
   HAL_TIM_Base_Start_IT(&htim16);
-
-  float_to_digit(991.5f, 1);
-
-
 
   /* USER CODE END 2 */
 
@@ -464,6 +470,45 @@ void float_to_digit (float num, uint8_t decimal){
 	}
 
 }
+
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin){
+
+	//float input;
+
+	currentDebounce = HAL_GetTick();
+
+	if((currentDebounce-lastDebounce) >= 50 && GPIO_Pin == GPIO_PIN_0){
+		lastDebounce = currentDebounce;
+
+		switch(state){
+		case 0:
+			float_to_digit(990.5f, 1);
+			state ++;
+			break;
+		case 1:
+			float_to_digit(-5.32f, 1);
+			state ++;
+			break;
+		case 2:
+			float_to_digit(0.42f, 1);
+			state = 0;
+			break;
+		default:
+		    state = 0;
+		    break;
+		}
+
+		//float_to_digit(input, 1);
+	}
+}
+
+
+
+
+
+
+
+
 
 
 
