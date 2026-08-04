@@ -22,6 +22,9 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 
+#include <stdbool.h>
+#include <math.h>
+
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -31,6 +34,10 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+
+#define SEGMENT_BLANK 0b00000000
+#define SEGMENT_NEGATIVE 0b01000000
+#define SEGMENT_DP 0b10000000
 
 /* USER CODE END PD */
 
@@ -61,10 +68,7 @@ const uint8_t digit_segments[10] = {
 		0b01100111  //9
 };
 
-uint8_t number[4] = {0, 2, 3, 9};
-
-
-
+uint8_t segment_display[4];
 
 /* USER CODE END PV */
 
@@ -78,6 +82,7 @@ static void MX_TIM16_Init(void);
 
 void set_segments(uint8_t input);
 void update_segment_display(uint8_t input);
+void float_to_digit (float num, uint8_t decimal);
 
 
 /* USER CODE END PFP */
@@ -124,7 +129,7 @@ int main(void)
   //Timer starts
   HAL_TIM_Base_Start_IT(&htim16);
 
-
+  float_to_digit(991.5f, 1);
 
 
 
@@ -396,7 +401,7 @@ void refresh_display(void){
 
 	update_segment_display(0b0000);
 
-	set_segments(digit_segments[number[digit_current]]);
+	set_segments(segment_display[digit_current]);
 
 	update_segment_display(1U << digit_current);
 
@@ -417,29 +422,48 @@ void HAL_TIM_PeriodElapsedCallback (TIM_HandleTypeDef * htim){
 
 }
 
+void float_to_digit (float num, uint8_t decimal){
+
+	bool negative = false;
+	bool value_is_zero;
+	uint16_t temp_num;
+	uint8_t decimal_position;
 
 
+	num = num * pow(10, decimal);
 
+	if(num < 0){
+		negative = true;
+		num = -num;
+	}
 
+	temp_num = (uint16_t)(num + 0.5f);
 
+	value_is_zero = (temp_num == 0);
 
+	for( uint8_t i = 0; i < 4; i ++){
+		if(temp_num > 0 || (value_is_zero && i == 0)){
+			segment_display[3-i] = digit_segments[temp_num % 10];
+			temp_num = temp_num / 10;
+		}
+		else if(negative){
+			segment_display[3-i] = SEGMENT_NEGATIVE;
+			negative = false;
+		}
+		else
+			segment_display[3-i] = SEGMENT_BLANK;
+	}
 
+	if(decimal > 0 && decimal <4){
+		decimal_position = 3 - decimal;
 
+		if(segment_display[decimal_position] == SEGMENT_BLANK)
+			segment_display[decimal_position] = digit_segments[0];
 
+		segment_display[decimal_position] = segment_display[decimal_position] | SEGMENT_DP;
+	}
 
-
-
-
-
-
-
-
-
-
-
-
-
-
+}
 
 
 
