@@ -48,6 +48,24 @@ UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
 
+const uint8_t digit_segments[10] = {
+		0b00111111, //0
+		0b00000110, //1
+		0b01011011, //2
+		0b01001111, //3
+		0b01100110, //4
+		0b01101101, //5
+		0b01111101, //6
+		0b00000111, //7
+		0b01111111, //8
+		0b01100111  //9
+};
+
+uint8_t number[4] = {0, 2, 3, 9};
+
+
+
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -57,6 +75,10 @@ static void MX_USART2_UART_Init(void);
 static void MX_I2C1_Init(void);
 static void MX_TIM16_Init(void);
 /* USER CODE BEGIN PFP */
+
+void set_segments(uint8_t input);
+void update_segment_display(uint8_t input);
+
 
 /* USER CODE END PFP */
 
@@ -98,6 +120,13 @@ int main(void)
   MX_I2C1_Init();
   MX_TIM16_Init();
   /* USER CODE BEGIN 2 */
+
+  //Timer starts
+  HAL_TIM_Base_Start_IT(&htim16);
+
+
+
+
 
   /* USER CODE END 2 */
 
@@ -336,6 +365,85 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
+
+
+
+void set_segments(uint8_t input){
+
+HAL_GPIO_WritePin(GPIOF, GPIO_PIN_1, (input & 1U)? GPIO_PIN_SET : GPIO_PIN_RESET); //a
+HAL_GPIO_WritePin(GPIOB, GPIO_PIN_4, (input & (1U << 1))? GPIO_PIN_SET : GPIO_PIN_RESET); //b
+HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, (input & (1U << 2))? GPIO_PIN_SET : GPIO_PIN_RESET); //c
+HAL_GPIO_WritePin(GPIOA, GPIO_PIN_6, (input & (1U << 3))? GPIO_PIN_SET : GPIO_PIN_RESET); //d
+HAL_GPIO_WritePin(GPIOA, GPIO_PIN_7, (input & (1U << 4))? GPIO_PIN_SET : GPIO_PIN_RESET); //e
+HAL_GPIO_WritePin(GPIOA, GPIO_PIN_8, (input & (1U << 5))? GPIO_PIN_SET : GPIO_PIN_RESET); //f
+HAL_GPIO_WritePin(GPIOA, GPIO_PIN_3, (input & (1U << 6))? GPIO_PIN_SET : GPIO_PIN_RESET); //g
+HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, (input & (1U << 7))? GPIO_PIN_SET : GPIO_PIN_RESET); //DP
+
+}
+
+void update_segment_display(uint8_t input){
+
+HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, (input & 1)? GPIO_PIN_RESET : GPIO_PIN_SET); //Dig1
+HAL_GPIO_WritePin(GPIOA, GPIO_PIN_11, (input & (1U << 1))? GPIO_PIN_RESET : GPIO_PIN_SET); //Dig2
+HAL_GPIO_WritePin(GPIOB, GPIO_PIN_5, (input & (1U << 2))? GPIO_PIN_RESET : GPIO_PIN_SET); //Dig3
+HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, (input & (1U << 3))? GPIO_PIN_RESET : GPIO_PIN_SET); //Dig4
+
+}
+
+void refresh_display(void){
+
+	static uint8_t digit_current = 0;
+
+	update_segment_display(0b0000);
+
+	set_segments(digit_segments[number[digit_current]]);
+
+	update_segment_display(1U << digit_current);
+
+	digit_current ++;
+
+	if(digit_current >= 4){
+		digit_current = 0;
+	}
+
+}
+
+
+void HAL_TIM_PeriodElapsedCallback (TIM_HandleTypeDef * htim){
+
+	if(htim == &htim16){
+		refresh_display();
+	}
+
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 /* USER CODE END 4 */
 
