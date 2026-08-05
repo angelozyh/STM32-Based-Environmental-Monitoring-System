@@ -25,6 +25,7 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <math.h>
+#include <string.h>
 
 /* USER CODE END Includes */
 
@@ -73,17 +74,24 @@ const uint8_t digit_segments[10] = {
 		0b01100111  //9
 };
 
-uint8_t segment_display[4] = {
+volatile uint8_t segment_display[4] = {
 		SEGMENT_BLANK,
 		SEGMENT_BLANK,
 		SEGMENT_BLANK,
 		SEGMENT_BLANK};
 
-// button debounce variables
+uint8_t segment_display_next[4] = {
+    SEGMENT_BLANK,
+    SEGMENT_BLANK,
+    SEGMENT_BLANK,
+    SEGMENT_BLANK
+};
+
+// Button debounce variables
 
 uint32_t currentDebounce = 0;
 uint32_t lastDebounce = 0;
-uint8_t state = 0;
+volatile uint8_t state = 0;
 
 // BME280 variables
 
@@ -102,7 +110,7 @@ float temperature;
 float pressure;
 float humidity;
 
-//Calibration parameter variables
+// Calibration parameter variables
 uint16_t dig_T1;
 int16_t dig_T2;
 int16_t dig_T3;
@@ -123,6 +131,22 @@ uint8_t dig_H3;
 int16_t dig_H4;
 int16_t dig_H5;
 int8_t dig_H6;
+
+// UART varaibles
+
+char rx_buffer[30];
+char command_buffer[30];
+char rx_char;
+int array_index = 0;
+
+volatile bool output_flag = false;
+volatile bool command_uncomplete = false;
+bool stream = false;
+
+const char *state_name[3] = {
+		"temperature",
+		"pressure",
+		"humidity"};
 
 /* USER CODE END PV */
 
@@ -151,6 +175,9 @@ HAL_StatusTypeDef BME280_calibration_parameters(void);
 
 void BME280_ReadData(void);
 void Display_Update(void);
+
+// prototype function for serial monitor print
+void print_serial_monitor(void);
 
 /* USER CODE END PFP */
 
@@ -194,10 +221,17 @@ int main(void)
   /* USER CODE BEGIN 2 */
 
   // Start sensor
-  BME280_init();
+  ret = BME280_init();
+  if(ret != HAL_OK){
+  		printf("BME280 initialization error\r\n");
+  		return ret;
+  }
 
   // Timer starts
   HAL_TIM_Base_Start_IT(&htim16);
+
+  // UART takes char from serial monitor
+  HAL_UART_Receive_IT(&huart2, (uint8_t *)&rx_char, 1);
 
   /* USER CODE END 2 */
 
@@ -214,7 +248,7 @@ int main(void)
 			float_to_digit(temperature, 1);
 			break;
 		case 1:
-			float_to_digit(pressure, 1);
+			float_to_digit(pressure, 0);
 			break;
 		case 2:
 			float_to_digit(humidity, 1);
@@ -223,7 +257,25 @@ int main(void)
 		    break;
 	  }
 
-	  HAL_Delay(250);
+	  if(stream){
+		  printf("Temperature: %.2f °C\r\n", temperature);
+		  printf("Pressure: %.2f hPa\r\n", pressure);
+		  printf("Humidity: %.2f %%RH\r\n", humidity);
+		  printf("State: %s\r\n", state_name[state]);
+	  }
+
+	  if(output_flag){
+		  print_serial_monitor();
+		  output_flag = false;
+	  }
+
+	  if (command_uncomplete)
+	  {
+	      printf("Command still in progress, please wait!\r\n");
+	      command_uncomplete = false;
+	  }
+
+	  HAL_Delay(750);
 
     /* USER CODE END WHILE */
 
@@ -499,7 +551,6 @@ void refresh_display(void){
 
 }
 
-
 void HAL_TIM_PeriodElapsedCallback (TIM_HandleTypeDef * htim){
 
 	if(htim == &htim16){
@@ -517,7 +568,6 @@ void float_to_digit (float num, uint8_t decimal){
 	uint16_t temp_num;
 	uint8_t decimal_position;
 
-
 	num = num * pow(10, decimal);
 
 	if(num < 0){
@@ -531,25 +581,34 @@ void float_to_digit (float num, uint8_t decimal){
 
 	for( uint8_t i = 0; i < 4; i ++){
 		if(temp_num > 0 || (value_is_zero && i == 0)){
-			segment_display[3-i] = digit_segments[temp_num % 10];
+			segment_display_next[3-i] = digit_segments[temp_num % 10];
 			temp_num = temp_num / 10;
 		}
 		else if(negative){
-			segment_display[3-i] = SEGMENT_NEGATIVE;
+			segment_display_next[3-i] = SEGMENT_NEGATIVE;
 			negative = false;
 		}
 		else
-			segment_display[3-i] = SEGMENT_BLANK;
+			segment_display_next[3-i] = SEGMENT_BLANK;
 	}
 
 	if(decimal > 0 && decimal <4){
 		decimal_position = 3 - decimal;
 
-		if(segment_display[decimal_position] == SEGMENT_BLANK)
-			segment_display[decimal_position] = digit_segments[0];
+		if(segment_display_next[decimal_position] == SEGMENT_BLANK)
+			segment_display_next[decimal_position] = digit_segments[0];
 
-		segment_display[decimal_position] = segment_display[decimal_position] | SEGMENT_DP;
+		segment_display_next[decimal_position] = segment_display_next[decimal_position] | SEGMENT_DP;
 	}
+
+	__HAL_TIM_DISABLE_IT(&htim16, TIM_IT_UPDATE);
+
+	for (uint8_t i = 0; i < 4; i++)
+	{
+	    segment_display[i] = segment_display_next[i];
+	}
+
+	__HAL_TIM_ENABLE_IT(&htim16, TIM_IT_UPDATE);
 
 }
 
@@ -562,7 +621,7 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin){
 	if((currentDebounce-lastDebounce) >= 50 && GPIO_Pin == GPIO_PIN_0){
 		lastDebounce = currentDebounce;
 
-		if(state < 3)
+		if(state < 2)
 			state ++;
 		else
 			state = 0;
@@ -611,11 +670,68 @@ void BME280_ReadData(){
 
 }
 
-void Display_Update(){
+// UART function to store string in char array
 
-	printf("Pressure: %.2f hPa\r\n", pressure);
-	printf("Temperature: %.2f °C\r\n", temperature);
-	printf("Humidity: %.2f %%RH\r\n\n", humidity);
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+{
+	if(huart == &huart2){
+		if(rx_char == '\r' || rx_char == '\n'){
+
+			if(array_index > 0){
+
+				rx_buffer[array_index] = '\0';
+
+				if(!output_flag){
+					strcpy(command_buffer, rx_buffer);
+					output_flag = true;
+				}
+				else
+				{
+				    command_uncomplete = true;
+				}
+
+				array_index = 0;
+			}
+		}
+		else if(array_index < (sizeof(rx_buffer) - 1)){
+			rx_buffer[array_index] = rx_char;
+			array_index++;
+		}
+
+	HAL_UART_Receive_IT(&huart2, (uint8_t *)&rx_char, 1);
+
+	}
+}
+
+// Print to serial monitor function
+
+void print_serial_monitor(void){
+
+	if(strcmp(command_buffer,"stream") == 0){
+		stream = true;
+		printf("Stream enabled");
+	}
+	else if(strcmp(command_buffer,"stop") == 0){
+		stream = false;
+		printf("Stream disabled");
+	}
+	else if(strcmp(command_buffer,"temp") == 0){
+		printf("Temperature: %.2f °C\r\n", temperature);
+	}
+	else if(strcmp(command_buffer,"pres") == 0){
+		printf("Pressure: %.2f hPa\r\n", pressure);
+	}
+	else if(strcmp(command_buffer,"hum") == 0){
+		printf("Humidity: %.2f %%RH\r\n", humidity);
+	}
+	else if(strcmp(command_buffer,"state") == 0){
+		printf("State: %s\r\n", state_name[state]);
+	}
+	else{
+		printf("Unrecognized command.\r\n");
+	}
+
+	printf("\n");
 
 }
 
@@ -668,12 +784,6 @@ dig_H3 = calibration2[2];
 dig_H4 = (int16_t)(((int16_t)(int8_t)calibration2[3] << 4) | (calibration2[4] & (0x0F)));
 dig_H5 = (int16_t)(((int16_t)(int8_t)calibration2[5] << 4) | (calibration2[4] >> 4));
 dig_H6 = (int8_t)calibration2[6];
-
-printf("P1=%u P2=%d P3=%d\r\n", dig_P1, dig_P2, dig_P3);
-printf("P4=%d P5=%d P6=%d\r\n", dig_P4, dig_P5, dig_P6);
-printf("P7=%d P8=%d P9=%d\r\n", dig_P7, dig_P8, dig_P9);
-
-printf("H1=%u H2=%d H3=%u H4=%d H5=%d H6=%d\r\n\n", dig_H1, dig_H2, dig_H3, dig_H4, dig_H5, dig_H6);
 
 return HAL_OK;
 }
@@ -769,12 +879,6 @@ uint32_t BME280_compensate_H_int32(int32_t adc_H)
 
     return (uint32_t)(v_x1_u32r >> 12);
 }
-
-
-
-
-
-
 
 /* USER CODE END 4 */
 
