@@ -53,14 +53,13 @@
 /* Private variables ---------------------------------------------------------*/
 I2C_HandleTypeDef hi2c1;
 
-TIM_HandleTypeDef htim16;
+TIM_HandleTypeDef htim3;
 
 UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
 
 // 7 segment display variables
-
 const uint8_t digit_segments[10] = {
 		0b00111111, //0
 		0b00000110, //1
@@ -74,18 +73,23 @@ const uint8_t digit_segments[10] = {
 		0b01100111  //9
 };
 
-volatile uint8_t segment_display[4] = {
+const uint8_t digit_position[4] = { // 3 is rightmost digit
+		0b00001000, //0
+		0b00000100, //1
+		0b00000010, //2
+		0b00000001  //3
+};
+
+uint8_t segment_display[4] = {
 		SEGMENT_BLANK,
 		SEGMENT_BLANK,
 		SEGMENT_BLANK,
 		SEGMENT_BLANK};
 
-uint8_t segment_display_next[4] = {
-    SEGMENT_BLANK,
-    SEGMENT_BLANK,
-    SEGMENT_BLANK,
-    SEGMENT_BLANK
-};
+uint16_t segment_position_binary[4];
+
+float input;
+
 
 // Button debounce variables
 
@@ -155,28 +159,24 @@ void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_USART2_UART_Init(void);
 static void MX_I2C1_Init(void);
-static void MX_TIM16_Init(void);
+static void MX_TIM3_Init(void);
 /* USER CODE BEGIN PFP */
 
-// prototype functions for 7 segment display
+// prototype functions
 
-void set_segments(uint8_t input);
-void update_segment_display(uint8_t input);
+// 7 segment display
 void float_to_digit (float num, uint8_t decimal);
 
-// prototype functions for BME280 sensor
+// BME280 sensor
+HAL_StatusTypeDef BME280_init(void);
+HAL_StatusTypeDef BME280_calibration_parameters(void);
+void BME280_ReadData(void);
 
 int32_t  BME280_compensate_T_int32(int32_t adc_T);
 uint32_t BME280_compensate_P_int64(int32_t adc_P);
 uint32_t BME280_compensate_H_int32(int32_t adc_H);
 
-HAL_StatusTypeDef BME280_init(void);
-HAL_StatusTypeDef BME280_calibration_parameters(void);
-
-void BME280_ReadData(void);
-void Display_Update(void);
-
-// prototype function for serial monitor print
+// UART
 void print_serial_monitor(void);
 
 /* USER CODE END PFP */
@@ -217,7 +217,7 @@ int main(void)
   MX_GPIO_Init();
   MX_USART2_UART_Init();
   MX_I2C1_Init();
-  MX_TIM16_Init();
+  MX_TIM3_Init();
   /* USER CODE BEGIN 2 */
 
   // Start sensor
@@ -228,7 +228,7 @@ int main(void)
   }
 
   // Timer starts
-  HAL_TIM_Base_Start_IT(&htim16);
+  HAL_TIM_Base_Start_IT(&htim3);
 
   // UART takes char from serial monitor
   HAL_UART_Receive_IT(&huart2, (uint8_t *)&rx_char, 1);
@@ -276,6 +276,7 @@ int main(void)
 	  }
 
 	  HAL_Delay(750);
+
 
     /* USER CODE END WHILE */
 
@@ -376,34 +377,47 @@ static void MX_I2C1_Init(void)
 }
 
 /**
-  * @brief TIM16 Initialization Function
+  * @brief TIM3 Initialization Function
   * @param None
   * @retval None
   */
-static void MX_TIM16_Init(void)
+static void MX_TIM3_Init(void)
 {
 
-  /* USER CODE BEGIN TIM16_Init 0 */
+  /* USER CODE BEGIN TIM3_Init 0 */
 
-  /* USER CODE END TIM16_Init 0 */
+  /* USER CODE END TIM3_Init 0 */
 
-  /* USER CODE BEGIN TIM16_Init 1 */
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
 
-  /* USER CODE END TIM16_Init 1 */
-  htim16.Instance = TIM16;
-  htim16.Init.Prescaler = 8-1;
-  htim16.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim16.Init.Period = 1000-1;
-  htim16.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
-  htim16.Init.RepetitionCounter = 0;
-  htim16.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
-  if (HAL_TIM_Base_Init(&htim16) != HAL_OK)
+  /* USER CODE BEGIN TIM3_Init 1 */
+
+  /* USER CODE END TIM3_Init 1 */
+  htim3.Instance = TIM3;
+  htim3.Init.Prescaler = 8-1;
+  htim3.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim3.Init.Period = 1000-1;
+  htim3.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim3.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim3) != HAL_OK)
   {
     Error_Handler();
   }
-  /* USER CODE BEGIN TIM16_Init 2 */
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim3, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim3, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM3_Init 2 */
 
-  /* USER CODE END TIM16_Init 2 */
+  /* USER CODE END TIM3_Init 2 */
 
 }
 
@@ -463,11 +477,10 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_WritePin(GPIOF, GPIO_PIN_1, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1|GPIO_PIN_3|GPIO_PIN_4|GPIO_PIN_5
-                          |GPIO_PIN_6|GPIO_PIN_7|GPIO_PIN_8|GPIO_PIN_11, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_8, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1|GPIO_PIN_4|GPIO_PIN_5, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_4, GPIO_PIN_RESET);
 
   /*Configure GPIO pin : PF1 */
   GPIO_InitStruct.Pin = GPIO_PIN_1;
@@ -476,31 +489,29 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOF, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : PA1 PA3 PA4 PA5
-                           PA6 PA7 PA8 PA11 */
-  GPIO_InitStruct.Pin = GPIO_PIN_1|GPIO_PIN_3|GPIO_PIN_4|GPIO_PIN_5
-                          |GPIO_PIN_6|GPIO_PIN_7|GPIO_PIN_8|GPIO_PIN_11;
+  /*Configure GPIO pin : PA7 */
+  GPIO_InitStruct.Pin = GPIO_PIN_7;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : PA8 */
+  GPIO_InitStruct.Pin = GPIO_PIN_8;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : PB0 */
-  GPIO_InitStruct.Pin = GPIO_PIN_0;
-  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
-
-  /*Configure GPIO pins : PB1 PB4 PB5 */
-  GPIO_InitStruct.Pin = GPIO_PIN_1|GPIO_PIN_4|GPIO_PIN_5;
+  /*Configure GPIO pin : PB4 */
+  GPIO_InitStruct.Pin = GPIO_PIN_4;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
   /* EXTI interrupt init*/
-  HAL_NVIC_SetPriority(EXTI0_IRQn, 0, 0);
-  HAL_NVIC_EnableIRQ(EXTI0_IRQn);
+  HAL_NVIC_SetPriority(EXTI9_5_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(EXTI9_5_IRQn);
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
 
@@ -508,56 +519,6 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
-
-// Functions for 4 digit 7 segment display
-
-void set_segments(uint8_t input){
-
-HAL_GPIO_WritePin(GPIOF, GPIO_PIN_1, (input & 1U)? GPIO_PIN_SET : GPIO_PIN_RESET); //a
-HAL_GPIO_WritePin(GPIOB, GPIO_PIN_4, (input & (1U << 1))? GPIO_PIN_SET : GPIO_PIN_RESET); //b
-HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, (input & (1U << 2))? GPIO_PIN_SET : GPIO_PIN_RESET); //c
-HAL_GPIO_WritePin(GPIOA, GPIO_PIN_6, (input & (1U << 3))? GPIO_PIN_SET : GPIO_PIN_RESET); //d
-HAL_GPIO_WritePin(GPIOA, GPIO_PIN_7, (input & (1U << 4))? GPIO_PIN_SET : GPIO_PIN_RESET); //e
-HAL_GPIO_WritePin(GPIOA, GPIO_PIN_8, (input & (1U << 5))? GPIO_PIN_SET : GPIO_PIN_RESET); //f
-HAL_GPIO_WritePin(GPIOA, GPIO_PIN_3, (input & (1U << 6))? GPIO_PIN_SET : GPIO_PIN_RESET); //g
-HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, (input & (1U << 7))? GPIO_PIN_SET : GPIO_PIN_RESET); //DP
-
-}
-
-void update_segment_display(uint8_t input){
-
-HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, (input & 1)? GPIO_PIN_RESET : GPIO_PIN_SET); //Dig1
-HAL_GPIO_WritePin(GPIOA, GPIO_PIN_11, (input & (1U << 1))? GPIO_PIN_RESET : GPIO_PIN_SET); //Dig2
-HAL_GPIO_WritePin(GPIOB, GPIO_PIN_5, (input & (1U << 2))? GPIO_PIN_RESET : GPIO_PIN_SET); //Dig3
-HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, (input & (1U << 3))? GPIO_PIN_RESET : GPIO_PIN_SET); //Dig4
-
-}
-
-void refresh_display(void){
-
-	static uint8_t digit_current = 0;
-
-	update_segment_display(0b0000);
-
-	set_segments(segment_display[digit_current]);
-
-	update_segment_display(1U << digit_current);
-
-	digit_current ++;
-
-	if(digit_current >= 4){
-		digit_current = 0;
-	}
-
-}
-
-void HAL_TIM_PeriodElapsedCallback (TIM_HandleTypeDef * htim){
-
-	if(htim == &htim16){
-		refresh_display();
-	}
-
-}
 
 // Function to convert float to 4 digits for 7 segment display
 
@@ -579,38 +540,71 @@ void float_to_digit (float num, uint8_t decimal){
 
 	value_is_zero = (temp_num == 0);
 
-	for( uint8_t i = 0; i < 4; i ++){
+	for(uint8_t i = 0; i < 4; i ++){
 		if(temp_num > 0 || (value_is_zero && i == 0)){
-			segment_display_next[3-i] = digit_segments[temp_num % 10];
+			segment_display[3-i] = digit_segments[temp_num % 10];
 			temp_num = temp_num / 10;
 		}
 		else if(negative){
-			segment_display_next[3-i] = SEGMENT_NEGATIVE;
+			segment_display[3-i] = SEGMENT_NEGATIVE;
 			negative = false;
 		}
 		else
-			segment_display_next[3-i] = SEGMENT_BLANK;
+			segment_display[3-i] = SEGMENT_BLANK;
 	}
 
 	if(decimal > 0 && decimal <4){
 		decimal_position = 3 - decimal;
 
-		if(segment_display_next[decimal_position] == SEGMENT_BLANK)
-			segment_display_next[decimal_position] = digit_segments[0];
+		if(segment_display[decimal_position] == SEGMENT_BLANK)
+			segment_display[decimal_position] = digit_segments[0];
 
-		segment_display_next[decimal_position] = segment_display_next[decimal_position] | SEGMENT_DP;
+		segment_display[decimal_position] = segment_display[decimal_position] | SEGMENT_DP;
 	}
+}
 
-	__HAL_TIM_DISABLE_IT(&htim16, TIM_IT_UPDATE);
+void ShiftOut16(uint16_t input)
+{
+    for(int i = 15; i >= 0; i--)
+    {
+        // Put bit i onto DATA
+    	if(input & (1U << i))
+    		HAL_GPIO_WritePin(GPIOF, GPIO_PIN_1, GPIO_PIN_SET);
+    	else
+    		HAL_GPIO_WritePin(GPIOF, GPIO_PIN_1, GPIO_PIN_RESET);
 
-	for (uint8_t i = 0; i < 4; i++)
-	{
-	    segment_display[i] = segment_display_next[i];
+        // Pulse CLOCK
+    	HAL_GPIO_WritePin(GPIOB, GPIO_PIN_4, GPIO_PIN_SET);
+    	HAL_GPIO_WritePin(GPIOB, GPIO_PIN_4, GPIO_PIN_RESET);
+    }
+
+    // Pulse LATCH
+    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_8, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_8, GPIO_PIN_RESET);
+}
+
+void refresh_display(void){
+
+	static uint8_t digit_current = 0;
+
+	segment_position_binary[digit_current] = (uint16_t)segment_display[digit_current] << 8 | digit_position[digit_current];
+
+    ShiftOut16(segment_position_binary[digit_current]);
+
+    digit_current++;
+
+    if (digit_current >= 4)
+    	digit_current = 0;
+}
+
+void HAL_TIM_PeriodElapsedCallback (TIM_HandleTypeDef * htim){
+
+	if(htim == &htim3){
+		refresh_display();
 	}
-
-	__HAL_TIM_ENABLE_IT(&htim16, TIM_IT_UPDATE);
 
 }
+
 
 // Function for button & debounce
 
@@ -618,7 +612,7 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin){
 
 	currentDebounce = HAL_GetTick();
 
-	if((currentDebounce-lastDebounce) >= 50 && GPIO_Pin == GPIO_PIN_0){
+	if((currentDebounce-lastDebounce) >= 50 && GPIO_Pin == GPIO_PIN_7){
 		lastDebounce = currentDebounce;
 
 		if(state < 2)
