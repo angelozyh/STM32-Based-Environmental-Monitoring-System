@@ -261,7 +261,7 @@ int main(void)
 		  printf("Temperature: %.2f °C\r\n", temperature);
 		  printf("Pressure: %.2f hPa\r\n", pressure);
 		  printf("Humidity: %.2f %%RH\r\n", humidity);
-		  printf("State: %s\r\n", state_name[state]);
+		  printf("State: %s\r\n\n", state_name[state]);
 	  }
 
 	  if(output_flag){
@@ -605,14 +605,13 @@ void HAL_TIM_PeriodElapsedCallback (TIM_HandleTypeDef * htim){
 
 }
 
-
 // Function for button & debounce
 
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin){
 
 	currentDebounce = HAL_GetTick();
 
-	if((currentDebounce-lastDebounce) >= 50 && GPIO_Pin == GPIO_PIN_7){
+	if((currentDebounce-lastDebounce) >= 125 && GPIO_Pin == GPIO_PIN_7){
 		lastDebounce = currentDebounce;
 
 		if(state < 2)
@@ -703,11 +702,11 @@ void print_serial_monitor(void){
 
 	if(strcmp(command_buffer,"stream") == 0){
 		stream = true;
-		printf("Stream enabled");
+		printf("Stream enabled\r\n");
 	}
 	else if(strcmp(command_buffer,"stop") == 0){
 		stream = false;
-		printf("Stream disabled");
+		printf("Stream disabled\r\n");
 	}
 	else if(strcmp(command_buffer,"temp") == 0){
 		printf("Temperature: %.2f °C\r\n", temperature);
