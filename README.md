@@ -9,7 +9,7 @@ A push button allows the user to cycle between measurements, while a **UART seri
 ## Demo
 
 <p align="center">
-  <img width="800" height="450" alt="STM32_BME280_Monitor_Gif" src="https://github.com/user-attachments/assets/cceb2637-765e-4611-ac23-82b07597f6f7" />
+  <img width="800" height="450" alt="STM32_BME280_Monitor" src="https://github.com/user-attachments/assets/450856c5-0fe0-450c-b840-922e46dbd2d2" />
 </p>
 
 <br>
