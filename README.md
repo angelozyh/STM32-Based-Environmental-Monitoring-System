@@ -8,7 +8,9 @@ A push button allows the user to cycle between measurements, while a **UART seri
 
 ## Demo
 
-<img width="800" height="450" alt="STM32_BME280_Monitor_Gif" src="https://github.com/user-attachments/assets/cceb2637-765e-4611-ac23-82b07597f6f7" />
+<p align="center">
+  <img width="800" height="450" alt="STM32_BME280_Monitor_Gif" src="https://github.com/user-attachments/assets/cceb2637-765e-4611-ac23-82b07597f6f7" />
+</p>
 
 The demonstration shows the system cycling between temperature, pressure, and humidity readings while simultaneously outputting sensor data and the current system state over UART.
 
